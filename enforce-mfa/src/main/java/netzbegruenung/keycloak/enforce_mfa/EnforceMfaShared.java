@@ -23,7 +23,8 @@ public final class EnforceMfaShared {
 		"otp",
 		"webauthn",
 		"webauthn-passwordless",
-		"email-authenticator"
+		"email-authenticator",
+		"mobile-number"
 	);
 
 	/** Required action ids for {@link ConditionalEnforceMfaAuthenticatorFactory} admin UI. */
@@ -31,7 +32,8 @@ public final class EnforceMfaShared {
 		"CONFIGURE_TOTP",
 		"webauthn-register",
 		"webauthn-register-passwordless",
-		"email-authenticator-setup"
+		"email-authenticator-setup",
+		"mobile_number_config"
 	);
 
 	/**

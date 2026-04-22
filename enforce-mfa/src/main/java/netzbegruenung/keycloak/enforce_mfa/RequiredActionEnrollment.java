@@ -15,7 +15,9 @@ public final class RequiredActionEnrollment {
 		"CONFIGURE_TOTP", "otp",
 		"webauthn-register", "webauthn",
 		"webauthn-register-passwordless", "webauthn-passwordless",
-		"email-authenticator-setup", "email-authenticator"
+		"email-authenticator-setup", "email-authenticator",
+		"mobile_number_config", "mobile-number",
+		"phone_validation_config", "mobile-number"
 	);
 
 	private RequiredActionEnrollment() {
