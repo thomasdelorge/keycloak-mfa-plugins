@@ -1,6 +1,12 @@
 package netzbegruenung.keycloak.enforce_mfa;
 
+import org.keycloak.authentication.requiredactions.WebAuthnPasswordlessRegisterFactory;
+import org.keycloak.authentication.requiredactions.WebAuthnRegisterFactory;
+import org.keycloak.credential.OTPCredentialProviderFactory;
+import org.keycloak.credential.WebAuthnCredentialProviderFactory;
+import org.keycloak.credential.WebAuthnPasswordlessCredentialProviderFactory;
 import org.keycloak.models.Constants;
+import org.keycloak.models.UserModel;
 
 import java.util.List;
 import java.util.Map;
@@ -20,20 +26,20 @@ public final class EnforceMfaShared {
 
 	/** Credential type ids for {@link MfaCredentialConditionFactory} admin UI. */
 	public static final List<String> CREDENTIAL_TYPE_OPTIONS = List.of(
-		"otp",
-		"webauthn",
-		"webauthn-passwordless",
-		"email-authenticator",
-		"mobile-number"
+		OTPCredentialProviderFactory.PROVIDER_ID,
+		WebAuthnCredentialProviderFactory.PROVIDER_ID,
+		WebAuthnPasswordlessCredentialProviderFactory.PROVIDER_ID,
+		"email-authenticator", /* from mesutpiskin/keycloak-2fa-email-authenticator */
+		"mobile-number" /* from netzbegruenung/keycloak-mfa-plugins/sms-authenticator */
 	);
 
 	/** Required action ids for {@link ConditionalEnforceMfaAuthenticatorFactory} admin UI. */
 	public static final List<String> REQUIRED_ACTION_OPTIONS = List.of(
-		"CONFIGURE_TOTP",
-		"webauthn-register",
-		"webauthn-register-passwordless",
-		"email-authenticator-setup",
-		"mobile_number_config"
+		UserModel.RequiredAction.CONFIGURE_TOTP.name(),
+		WebAuthnRegisterFactory.PROVIDER_ID,
+		WebAuthnPasswordlessRegisterFactory.PROVIDER_ID,
+		"email-authenticator-setup", /* from mesutpiskin/keycloak-2fa-email-authenticator */
+		"mobile_number_config" /* from netzbegruenung/keycloak-mfa-plugins/sms-authenticator */
 	);
 
 	/**
