@@ -33,7 +33,7 @@ public class MfaCredentialConditionFactory implements ConditionalAuthenticatorFa
 
 	@Override
 	public String getDisplayType() {
-		return "Condition - MFA credentials (enrolled)";
+		return "Condition - MFA credentials enrolled";
 	}
 
 	@Override

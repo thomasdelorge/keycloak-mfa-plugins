@@ -56,8 +56,8 @@ Simple example (excerpt of a browser flow):
 
 ```
 - Register MFA (subflow CONDITIONAL)
--- Condition - MFA credentials (enrolled) REQUIRED   [invertMatch: true, types e.g. otp + webauthn, combine ANY]
--- Conditional Enforce MFA (config lists) REQUIRED   [offered: CONFIGURE_TOTP, webauthn-register]
+-- Condition - MFA credentials enrolled REQUIRED   [invertMatch: true, types e.g. otp + webauthn, combine ANY]
+-- Conditional Enforce MFA REQUIRED   [offered: CONFIGURE_TOTP, webauthn-register]
 ```
 
 Here the condition can send users into the subflow when MFA is still missing; **Conditional Enforce MFA** then lets them pick one configured method until at least one offered enrollment is satisfied.

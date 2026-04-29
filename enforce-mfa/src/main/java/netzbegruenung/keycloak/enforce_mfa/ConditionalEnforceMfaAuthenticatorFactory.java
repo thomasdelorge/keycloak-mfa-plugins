@@ -23,7 +23,7 @@ public class ConditionalEnforceMfaAuthenticatorFactory implements AuthenticatorF
 
 	@Override
 	public String getDisplayType() {
-		return "Conditional Enforce MFA (config lists)";
+		return "Conditional Enforce MFA";
 	}
 
 	@Override
