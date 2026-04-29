@@ -19,30 +19,46 @@ from the original authenticator provider [documentation](https://www.keycloak.or
    systemctl restart keycloak.service
    ```
 
-# Setup
-1. Go to `/admin/master/console/#/realm/authentication/required-actions` and enable required actions "Phone Validation" and "Update Mobile Number"
-1. Navigate to your Authentication flow configuration: https://keycloak.example.com/admin/master/console/#/YOUR-REALM/authentication. Then edit the `Browser flow`.
-1. Add a new step next to the `OTP Form` step. Choose the `SMS Authentication (2FA)` authenticator and set it to `Alternative`.
-1. Make sure that you name the Alias `sms-2fa`. This is currently a hack that will hopefully be fixed. Additional executions with other names can be added. But this first execution will be used for the confirmation SMS when setting up a new phone number.
-1. Go into the config of the execution and configure the plugin so that it works with the API of your SMS proivder HTTP API. The data is always sent in a HTTP POST request. Refer to the API documentation of your provider to choose the correct configuration values. The details of the request can be configured with the following configuration options:
-   1. `SMS API URL`: the URL to which the HTTP POST request should be sent.
-   1. `URL encode data`: When off, the data will be sent as an `application/json` body. When on, the data will be encoded as URL parameters.
-   1. `Put API Secret Token in Authorization Header`: If set, API Secret will be sent as Authorization Header, 'API Secret Token Attribute' and 'Basic Auth Username' will be ignored.
-   1. `API Secret Token Attribute (optional)`: Name of attribute that contains your API token/secret. In some APIs the secret is already configured in the path. In this case, this can be left empty.
-   1. `API Secret (optional)`: Your API secret. If a Basic Auth user is set, this will be the Basic Auth password. If `API Secret Token Attribute` is set, this secret will be sent as the value to the given attribute name.
-   1. `Basic Auth Username (optional)`: If set, Basic Auth will be performed. Leave empty if not required.
-   1. `Message Attribute`: The attribute that contains the SMS message text. For many APIs (i.e. GTX Messaging, SMS Eagle) this is `text`.
-   1. `Receiver Phone Number Attribute`: The attribute that contains the receiver phone number. For many APIs (i.e. GTX Messaging, SMS Eagle) this is `to`.
-   1. `Sender Phone Number Attribute`: The attribute that contains the sender phone number. Leave empty if not required.
-   1. `SenderId`: The sender ID is displayed as the message sender on the receiving device. This is the value for the `Sender Phone Number Attribute`.
-   1. `Use message UUID`: If your API requires UUID for a message, you can generate it with this property.
-   2. `UUID attribute`: The attribute that contains the generated UUID. Only aplicable when `Use message UUID` is set.
-   3. `Request JSON template`: If default JSON template is not enough for your needs, put your custom template here. UUID (if 'Use message UUID' is set), phone number and message (in that order) use placeholders `%s`.
+## Where configuration lives
 
-# Usage
-After successfully configured the authenticator and the required actions users can set up SMS Authentication in the
-account console `/realms/realm/account/#/account-security/signing-in` by entering and confirming their phone number.
+| What | Where |
+|------|--------|
+| **Login** (browser flow, step *SMS Authentication (2FA)*) | Optional config on that execution. If the step has **no** config, Keycloak uses the **same base map** as registration (see below), then merges any execution config on top so **per-step values win**. |
+| **Registration** (required actions *Update Mobile Number* / *Phone Validation*) | **Option A:** settings on *Update Mobile Number* (gear). **Option B:** leave those empty and use a realm authenticator config by alias (see *Phone registration* below). |
 
-# Enforce SMS 2FA
-If the option `Force 2FA` in the SMS Authenticator config is enabled and a user has no other 2FA method already enabled,
-users will have to set up the SMS Authenticator.
+## Phone registration: where do SMS settings come from?
+
+When users **add or confirm a mobile number** (required actions *Update Mobile Number* and *Phone Validation*), the plugin needs the same kind of settings as for login SMS (API URL, code length, TTL, provider-specific fields). You can supply them in **two ways**; pick one as your main approach.
+
+### Option A — All in the required action (good default for new projects)
+
+1. Open **Authentication → Required actions**.
+1. Open **Update Mobile Number** → **Settings** (gear icon).
+1. Fill the SMS fields (same labels as for the *SMS Authentication (2FA)* authenticator in a flow).
+
+As soon as **SMS API URL**, **Code length**, or **Time-to-live** is non-empty, **registration** uses **only** this screen. Empty fields use the same defaults as the authenticator factory. You do **not** need a separate “registration-only” authenticator config for this path.
+
+### Option B — Reuse a realm authenticator config (legacy / upgrades)
+
+Leave **SMS API URL**, **Code length**, and **Time-to-live** **empty** on *Update Mobile Number*. Registration then loads the **realm authenticator configuration** (a named block of settings in Keycloak) whose **alias** is **`sms-2fa`** — the same **Authenticator config** you create in the admin UI under **Authentication → Flows** (e.g. Browser flow) on the **SMS Authentication (2FA)** step, or via realm import/API. Several executions can reference the same config; registration resolves it **by that fixed alias**, not by “which flow you edited last”.
+
+> **Why `sms-2fa`?** Older setups and docs used a single realm config with that alias, often created from the browser flow’s SMS step. Keeping it as the default avoids breaking upgrades. New installs can ignore it if they use **Option A** only.
+
+## First-time checklist
+
+1. *Authentication → Required actions*: enable **Phone Validation** and **Update Mobile Number**.
+1. *Authentication → Flows* (e.g. **Browser**): add step **SMS Authentication (2FA)** (often **Alternative** next to OTP).
+1. Configure SMS for your provider using **one** main approach:
+   - **Option A:** required action *Update Mobile Number* (gear), or  
+   - **Option B:** authenticator config in a flow (alias `sms-2fa`) if the required action SMS fields stay empty, and/or  
+   - **Per-flow login overrides:** config on the SMS **execution** in the flow when that flow needs different values for **login**.
+1. For **login**, if the SMS step has no config, it reuses the same effective map as registration; attach a config on the step only when that flow needs different values.
+
+## Usage
+
+Users configure SMS in the account console, e.g.  
+`/realms/<realm>/account/#/account-security/signing-in` — enter and confirm the mobile number.
+
+## Enforce SMS 2FA
+
+If **Force 2FA** is enabled in the **effective registration** configuration (Option A map on the required action, or Option B authenticator config) and the user has no other second factor yet, they are pushed to set up SMS (or another allowed required action).
