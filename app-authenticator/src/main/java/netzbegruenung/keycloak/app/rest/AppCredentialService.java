@@ -85,22 +85,23 @@ public class AppCredentialService {
 	}
 
 	/**
-	 * Realm-wide check, required because (realm_id, device_id) is a DB-level unique
+	 * Realm-wide lookup, required because (realm_id, device_id) is a DB-level unique
 	 * constraint on AppAuthCredentialIndex - registration must pre-check across all users,
-	 * not just the requesting user's own credentials. Reuses findByRealmAndDeviceId rather
-	 * than a separate count query: the unique constraint guarantees at most one match, so
-	 * NoResultException already tells us everything a count would.
+	 * not just the requesting user's own credentials.
 	 */
-	public boolean isDeviceIdRegistered(RealmModel realm, String deviceId) {
+	public AppAuthCredentialIndex findByRealmAndDeviceId(RealmModel realm, String deviceId) {
 		try {
-			em.createNamedQuery("AppAuthCredentialIndex.findByRealmAndDeviceId", AppAuthCredentialIndex.class)
+			return em.createNamedQuery("AppAuthCredentialIndex.findByRealmAndDeviceId", AppAuthCredentialIndex.class)
 				.setParameter("realm", em.getReference(RealmEntity.class, realm.getId()))
 				.setParameter("deviceId", deviceId)
 				.getSingleResult();
-			return true;
 		} catch (NoResultException e) {
-			return false;
+			return null;
 		}
+	}
+
+	public boolean isDeviceIdRegistered(RealmModel realm, String deviceId) {
+		return findByRealmAndDeviceId(realm, deviceId) != null;
 	}
 
 	/**
