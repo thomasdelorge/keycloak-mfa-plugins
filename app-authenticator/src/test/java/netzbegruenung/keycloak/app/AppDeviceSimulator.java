@@ -36,8 +36,17 @@ final class AppDeviceSimulator {
 	private final String deviceId;
 
 	AppDeviceSimulator() throws NoSuchAlgorithmException {
+		this(UUID.randomUUID().toString());
+	}
+
+	/**
+	 * Simulates reinstalling the app on a device whose device_id doesn't change: a fresh key
+	 * pair (a real reinstall wouldn't retain the old one), same device_id as an earlier
+	 * simulator instance.
+	 */
+	AppDeviceSimulator(String deviceId) throws NoSuchAlgorithmException {
 		this.keyPair = KeyPairGenerator.getInstance(KEY_ALGORITHM).generateKeyPair();
-		this.deviceId = UUID.randomUUID().toString();
+		this.deviceId = deviceId;
 	}
 
 	String deviceId() {

@@ -2,11 +2,13 @@ package netzbegruenung.keycloak.app.actiontoken;
 
 import netzbegruenung.keycloak.app.AppCredentialProviderFactory;
 import netzbegruenung.keycloak.app.credentials.AppCredentialModel;
+import netzbegruenung.keycloak.app.jpa.AppAuthCredentialIndex;
 import netzbegruenung.keycloak.app.rest.AppCredentialService;
 import netzbegruenung.keycloak.app.rest.StatusResourceProvider;
 import org.keycloak.authentication.actiontoken.AbstractActionTokenHandler;
 import org.keycloak.authentication.actiontoken.ActionTokenContext;
 import org.keycloak.credential.CredentialProvider;
+import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.events.EventType;
 import org.keycloak.models.ModelDuplicateException;
@@ -50,7 +52,7 @@ public class AppSetupActionTokenHandler extends AbstractActionTokenHandler<AppSe
 
 		UserModel user = tokenContext.getAuthenticationSession().getAuthenticatedUser();
 		AppCredentialService appCredentialService = new AppCredentialService(tokenContext.getSession());
-		boolean deviceIdTaken = appCredentialService.isDeviceIdRegistered(tokenContext.getRealm(), deviceId);
+		AppAuthCredentialIndex existingIndex = appCredentialService.findByRealmAndDeviceId(tokenContext.getRealm(), deviceId);
 
 		AuthenticationSessionModel authSession = ActionTokenUtil.getOriginalAuthSession(
 			tokenContext.getSession(),
@@ -62,7 +64,7 @@ public class AppSetupActionTokenHandler extends AbstractActionTokenHandler<AppSe
 			return Response.status(Response.Status.FORBIDDEN).build();
 		}
 
-		if (deviceIdTaken) {
+		if (existingIndex != null && !existingIndex.getUser().getId().equals(user.getId())) {
 			authSession.setAuthNote("duplicateDeviceId", Boolean.toString(true));
 			authSession.setAuthNote(StatusResourceProvider.READY, Boolean.toString(true));
 			return Response.status(400).build();
@@ -72,6 +74,16 @@ public class AppSetupActionTokenHandler extends AbstractActionTokenHandler<AppSe
 			CredentialProvider.class,
 			AppCredentialProviderFactory.PROVIDER_ID
 		);
+
+		// Re-registering the same device_id the user already owns (e.g. reinstalling the app):
+		// replace the old credential rather than rejecting. The old index row is removed by the
+		// CREDENTIAL_ID -> CREDENTIAL onDelete=CASCADE FK (app-credential-index-changelog.xml), so
+		// no separate index cleanup is needed here.
+		boolean isOverwrite = existingIndex != null;
+		if (isOverwrite) {
+			appCredentialProvider.deleteCredential(tokenContext.getRealm(), user, existingIndex.getCredentialId());
+		}
+
 		try {
 			appCredentialProvider.createCredential(
 				tokenContext.getRealm(),
@@ -84,6 +96,15 @@ public class AppSetupActionTokenHandler extends AbstractActionTokenHandler<AppSe
 			authSession.setAuthNote("duplicateDeviceId", Boolean.toString(true));
 			authSession.setAuthNote(StatusResourceProvider.READY, Boolean.toString(true));
 			return Response.status(400).build();
+		}
+
+		if (isOverwrite) {
+			tokenContext.getEvent().clone().event(EventType.UPDATE_CREDENTIAL)
+				.user(user)
+				.detail(Details.CREDENTIAL_TYPE, AppCredentialModel.TYPE)
+				.detail("device_id", deviceId)
+				.detail("replaced_credential_id", existingIndex.getCredentialId())
+				.success();
 		}
 
 		authSession.setAuthNote("appSetupSuccessful", Boolean.toString(true));

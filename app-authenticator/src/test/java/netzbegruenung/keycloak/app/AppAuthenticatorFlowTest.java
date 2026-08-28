@@ -35,6 +35,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -50,8 +51,11 @@ public class AppAuthenticatorFlowTest {
 	@InjectRealm
 	ManagedRealm managedRealm;
 
-	@InjectUser(config = AppUserConfig.class, lifecycle = LifeCycle.METHOD)
+	@InjectUser(ref = "user", config = AppUserConfig.class, lifecycle = LifeCycle.METHOD)
 	ManagedUser user;
+
+	@InjectUser(ref = "secondUser", config = SecondAppUserConfig.class, lifecycle = LifeCycle.METHOD)
+	ManagedUser secondUser;
 
 	@InjectWebDriver
 	ManagedWebDriver driver;
@@ -149,15 +153,111 @@ public class AppAuthenticatorFlowTest {
 		appLoginPage.assertCurrent();
 	}
 
-	private AppDeviceSimulator registerDevice() throws Exception {
+	@Test
+	public void reregisteringSameDeviceIdReplacesOwnCredential() throws Exception {
+		AppDeviceSimulator firstDevice = registerDevice();
+		String firstCredentialId = getAppCredentialId(user);
+		logout();
+		events.clear();
+
+		// The user already has the app credential configured, so "Conditional 2FA" challenges
+		// with it first (proving continued possession of the account) before the
+		// application-initiated "app-register" action (kc_action - the same AIA mechanism the
+		// account console uses) is allowed to run.
+		oauth.loginForm().kcAction(AppRequiredAction.PROVIDER_ID).open();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		appLoginPage.assertCurrent();
+		ChallengeDto loginChallenge = awaitChallenge(firstDevice);
+		assertEquals(204, firstDevice.respond(loginChallenge, true));
+		appLoginPage.submit();
+
+		appAuthSetupPage.assertCurrent();
+		String actionTokenUrl = appAuthSetupPage.getActionTokenUrl();
+
+		// Same device_id as firstDevice (simulating a reinstall), fresh key pair.
+		AppDeviceSimulator secondDevice = new AppDeviceSimulator(firstDevice.deviceId());
+		assertEquals(201, secondDevice.register(actionTokenUrl), "Expected overwrite registration to succeed");
+
+		appAuthSetupPage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.UPDATE_CREDENTIAL)
+			.userId(user.getId())
+			.details(Details.CREDENTIAL_TYPE, AppCredentialModel.TYPE);
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.CUSTOM_REQUIRED_ACTION)
+			.userId(user.getId());
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId())
+			.details(Details.USERNAME, user.getUsername());
+
+		var appCredentials = managedRealm.admin().users().get(user.getId())
+			.credentials().stream()
+			.filter(credential -> AppCredentialModel.TYPE.equals(credential.getType()))
+			.toList();
+		assertEquals(1, appCredentials.size(), "Expected exactly one APP_CREDENTIAL after overwrite");
+		assertNotEquals(firstCredentialId, appCredentials.get(0).getId(), "Expected a new credential id after overwrite");
+
+		// The new credential is actually usable for login, not just present.
+		logout();
+		events.clear();
+
 		oauth.openLoginForm();
 		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		appLoginPage.assertCurrent();
+
+		ChallengeDto challenge = awaitChallenge(secondDevice);
+		assertEquals(204, secondDevice.respond(challenge, true));
+
+		appLoginPage.submit();
+
+		EventAssertion.assertSuccess(events.poll())
+			.type(EventType.LOGIN)
+			.userId(user.getId())
+			.details(Details.USERNAME, user.getUsername());
+	}
+
+	@Test
+	public void differentUserCannotClaimAnotherUsersDeviceId() throws Exception {
+		AppDeviceSimulator device = registerDevice();
+		logout();
+		events.clear();
+
+		oauth.openLoginForm();
+		loginPage.fillLogin(secondUser.getUsername(), secondUser.getPassword());
 		loginPage.submit();
 
 		appAuthSetupPage.assertCurrent();
 		String actionTokenUrl = appAuthSetupPage.getActionTokenUrl();
 
-		AppDeviceSimulator device = new AppDeviceSimulator();
+		AppDeviceSimulator conflictingDevice = new AppDeviceSimulator(device.deviceId());
+		assertEquals(400, conflictingDevice.register(actionTokenUrl), "Expected duplicate device_id registration to be rejected");
+
+		boolean secondUserHasAppCredential = managedRealm.admin().users().get(secondUser.getId())
+			.credentials().stream()
+			.anyMatch(credential -> AppCredentialModel.TYPE.equals(credential.getType()));
+		assertFalse(secondUserHasAppCredential, "Expected no APP_CREDENTIAL for the second user after a rejected duplicate device_id");
+	}
+
+	private AppDeviceSimulator registerDevice() throws Exception {
+		oauth.openLoginForm();
+		loginPage.fillLogin(user.getUsername(), user.getPassword());
+		loginPage.submit();
+
+		return completeSetup(new AppDeviceSimulator());
+	}
+
+	private AppDeviceSimulator completeSetup(AppDeviceSimulator device) throws Exception {
+		appAuthSetupPage.assertCurrent();
+		String actionTokenUrl = appAuthSetupPage.getActionTokenUrl();
+
 		assertEquals(201, device.register(actionTokenUrl), "Expected device registration to succeed");
 
 		appAuthSetupPage.submit();
@@ -175,6 +275,15 @@ public class AppAuthenticatorFlowTest {
 			.details(Details.USERNAME, user.getUsername());
 
 		return device;
+	}
+
+	private String getAppCredentialId(ManagedUser managedUser) {
+		return managedRealm.admin().users().get(managedUser.getId())
+			.credentials().stream()
+			.filter(credential -> AppCredentialModel.TYPE.equals(credential.getType()))
+			.findFirst()
+			.orElseThrow(() -> new IllegalStateException("Expected an APP_CREDENTIAL for user " + managedUser.getId()))
+			.getId();
 	}
 
 	private ChallengeDto awaitChallenge(AppDeviceSimulator device) throws Exception {
@@ -201,6 +310,18 @@ public class AppAuthenticatorFlowTest {
 				.password("password")
 				.name("App", "Flow")
 				.email("app-flow@example.com")
+				.emailVerified(true)
+				.requiredActions(AppRequiredAction.PROVIDER_ID);
+		}
+	}
+
+	public static class SecondAppUserConfig implements UserConfig {
+		@Override
+		public UserBuilder configure(UserBuilder user) {
+			return user.username("app-flow-user-2")
+				.password("password")
+				.name("App", "FlowTwo")
+				.email("app-flow-2@example.com")
 				.emailVerified(true)
 				.requiredActions(AppRequiredAction.PROVIDER_ID);
 		}
