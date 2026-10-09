@@ -20,6 +20,10 @@ public class AuthenticationUtil {
 	private static final Logger logger = Logger.getLogger(AuthenticationUtil.class);
 	private static final Splitter.MapSplitter signatureMapSplitter = Splitter.on(",").withKeyValueSeparator(":");
 	public static final String SIGNATURE_HEADER = "Signature";
+	// Tolerated clock skew of a device whose clock runs ahead
+	private static final long MAX_CREATED_FUTURE_MILLIS = 10_000;
+	// Lifetime of a signature: without it, a captured Signature header could be replayed indefinitely
+	public static final long MAX_CREATED_AGE_MILLIS = 60_000;
 
 	public static Map<String, String> getSignatureMap(List<String> signatureHeaders) {
 		if (signatureHeaders.isEmpty()) {
@@ -45,8 +49,14 @@ public class AuthenticationUtil {
 		}
 
 		try {
-			if (Long.parseLong(signatureMap.get("created")) > Time.currentTimeMillis() + 1000 * 10) {
+			long created = Long.parseLong(signatureMap.get("created"));
+			long now = Time.currentTimeMillis();
+			if (created > now + MAX_CREATED_FUTURE_MILLIS) {
 				logger.warnf("Failed to parse signature header: created is in the future device ID [%s]", signatureMap.get("keyId"));
+				return null;
+			}
+			if (created < now - MAX_CREATED_AGE_MILLIS) {
+				logger.warnf("Failed to parse signature header: created is expired device ID [%s]", signatureMap.get("keyId"));
 				return null;
 			}
 		} catch (NumberFormatException e) {
@@ -62,29 +72,38 @@ public class AuthenticationUtil {
 	}
 
 	public static boolean verifyChallenge(UserModel user, AppCredentialData appCredentialData, String signedData, String signature) {
+		Signature verifier;
 		try {
-			KeyFactory keyFactory = KeyFactory.getInstance(appCredentialData.getKeyAlgorithm());
-			byte[] publicKeyBytes = Base64.decodeBase64(appCredentialData.getPublicKey());
-			EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(publicKeyBytes);
-			PublicKey publicKey = keyFactory.generatePublic(publicKeySpec);
-
-			Signature sign = Signature.getInstance(appCredentialData.getSignatureAlgorithm());
-			sign.initVerify(publicKey);
-			sign.update(signedData.getBytes());
-
-			if (!sign.verify(Base64.decodeBase64(signature))) {
-				logger.warnv("App authentication rejected: invalid signature for user [{0}]", user.getUsername());
-				return false;
-			}
-			return true;
-		} catch (NoSuchAlgorithmException | InvalidKeySpecException | SignatureException | InvalidKeyException e) {
-			logger.warnf(
+			verifier = createVerifier(appCredentialData);
+		} catch (NoSuchAlgorithmException | InvalidKeySpecException | InvalidKeyException e) {
+			// Broken stored credential, not fixable by the client, so an admin has to act
+			logger.errorf(
 				e,
-				"App authentication rejected: signature verification failed for user: [%s], probably due to malformed signature or wrong algorithm",
+				"App authentication rejected: unusable app credential for user [%s], unsupported algorithm or malformed public key",
 				user.getUsername()
 			);
 			return false;
 		}
+
+		try {
+			verifier.update(signedData.getBytes());
+			return verifier.verify(Base64.decodeBase64(signature));
+		} catch (SignatureException e) {
+			// Malformed signature sent by the client, reported by the callers as an event
+			return false;
+		}
+	}
+
+	private static Signature createVerifier(AppCredentialData appCredentialData)
+		throws NoSuchAlgorithmException, InvalidKeySpecException, InvalidKeyException {
+		KeyFactory keyFactory = KeyFactory.getInstance(appCredentialData.getKeyAlgorithm());
+		byte[] publicKeyBytes = Base64.decodeBase64(appCredentialData.getPublicKey());
+		EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(publicKeyBytes);
+		PublicKey publicKey = keyFactory.generatePublic(publicKeySpec);
+
+		Signature verifier = Signature.getInstance(appCredentialData.getSignatureAlgorithm());
+		verifier.initVerify(publicKey);
+		return verifier;
 	}
 
 }

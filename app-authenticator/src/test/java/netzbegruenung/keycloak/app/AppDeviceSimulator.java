@@ -1,6 +1,7 @@
 package netzbegruenung.keycloak.app;
 
 import netzbegruenung.keycloak.app.dto.ChallengeDto;
+import netzbegruenung.keycloak.app.dto.UpdateAppCredentialsDto;
 import org.keycloak.util.JsonSerialization;
 
 import java.io.IOException;
@@ -14,7 +15,7 @@ import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.security.Signature;
 import java.util.Base64;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -36,8 +37,17 @@ final class AppDeviceSimulator {
 	private final String deviceId;
 
 	AppDeviceSimulator() throws NoSuchAlgorithmException {
+		this(UUID.randomUUID().toString());
+	}
+
+	/**
+	 * Simulates reinstalling the app on a device whose device_id doesn't change: a fresh key
+	 * pair (a real reinstall wouldn't retain the old one), same device_id as an earlier
+	 * simulator instance.
+	 */
+	AppDeviceSimulator(String deviceId) throws NoSuchAlgorithmException {
 		this.keyPair = KeyPairGenerator.getInstance(KEY_ALGORITHM).generateKeyPair();
-		this.deviceId = UUID.randomUUID().toString();
+		this.deviceId = deviceId;
 	}
 
 	String deviceId() {
@@ -45,12 +55,21 @@ final class AppDeviceSimulator {
 	}
 
 	int register(String actionTokenUrl) throws IOException, InterruptedException {
+		return register(actionTokenUrl, true);
+	}
+
+	// Incomplete registration request, as sent by a broken or tampered app
+	int registerWithoutPublicKey(String actionTokenUrl) throws IOException, InterruptedException {
+		return register(actionTokenUrl, false);
+	}
+
+	private int register(String actionTokenUrl, boolean includePublicKey) throws IOException, InterruptedException {
 		String encodedPublicKey = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
 		String separator = actionTokenUrl.contains("?") ? "&" : "?";
 		String uri = actionTokenUrl + separator
 			+ "device_id=" + encode(deviceId)
 			+ "&device_os=" + encode("test-os")
-			+ "&public_key=" + encode(encodedPublicKey)
+			+ (includePublicKey ? "&public_key=" + encode(encodedPublicKey) : "")
 			+ "&key_algorithm=" + encode(KEY_ALGORITHM)
 			+ "&signature_algorithm=" + encode(SIGNATURE_ALGORITHM)
 			+ "&device_push_id=" + encode("test-push-id");
@@ -74,27 +93,45 @@ final class AppDeviceSimulator {
 	}
 
 	int respond(ChallengeDto challenge, boolean granted) throws IOException, InterruptedException {
+		return respond(challenge, granted, granted);
+	}
+
+	// Tamper attempt: signs a rejection but claims a grant in the header, so the signature doesn't match
+	int respondWithForgedGrant(ChallengeDto challenge) throws IOException, InterruptedException {
+		return respond(challenge, false, true);
+	}
+
+	private int respond(ChallengeDto challenge, boolean signedGranted, boolean sentGranted) throws IOException, InterruptedException {
 		String created = String.valueOf(System.currentTimeMillis());
 
-		Map<String, String> signedDataMap = new HashMap<>();
+		Map<String, String> signedDataMap = new LinkedHashMap<>();
 		signedDataMap.put("created", created);
 		signedDataMap.put("secret", challenge.codeChallenge());
-		signedDataMap.put("granted", String.valueOf(granted));
+		signedDataMap.put("granted", String.valueOf(signedGranted));
 		String signedData = AuthenticationUtil.getSignatureString(signedDataMap);
 
 		String signatureHeader = "signature:" + sign(signedData)
 			+ ",keyId:" + deviceId
 			+ ",created:" + created
-			+ ",granted:" + granted;
+			+ ",granted:" + sentGranted;
 
 		return send(HttpRequest.newBuilder(URI.create(challenge.targetUrl()))
 			.header(AuthenticationUtil.SIGNATURE_HEADER, signatureHeader)
 			.GET()).statusCode();
 	}
 
+	int updatePushId(String credentialsUrl, String devicePushId) throws IOException, InterruptedException {
+		String body = JsonSerialization.writeValueAsString(new UpdateAppCredentialsDto(devicePushId));
+
+		return send(HttpRequest.newBuilder(URI.create(credentialsUrl))
+			.header(AuthenticationUtil.SIGNATURE_HEADER, identitySignatureHeader())
+			.header("Content-Type", "application/json")
+			.PUT(HttpRequest.BodyPublishers.ofString(body))).statusCode();
+	}
+
 	private String identitySignatureHeader() {
 		String created = String.valueOf(System.currentTimeMillis());
-		Map<String, String> signedDataMap = new HashMap<>();
+		Map<String, String> signedDataMap = new LinkedHashMap<>();
 		signedDataMap.put("created", created);
 		String signedData = AuthenticationUtil.getSignatureString(signedDataMap);
 

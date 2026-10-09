@@ -50,6 +50,10 @@ public class EmailAuthenticator implements Authenticator {
 	private static final Logger logger = Logger.getLogger(EmailAuthenticator.class);
 	static final String TPL_CODE = "login-email.ftl";
 	private static final String EMAIL_TPL_CODE = "email-auth.ftl";
+	// Dedicated LOGIN_ERROR event errors, so email code failures are distinguishable from a wrong password
+	// (invalid_user_credentials) and from Keycloak's own expired codes (expired_code)
+	public static final String INVALID_EMAIL_CODE = "invalid_email_code";
+	public static final String EXPIRED_EMAIL_CODE = "expired_email_code";
 
 	@Override
 	public void authenticate(AuthenticationFlowContext context) {
@@ -111,6 +115,7 @@ public class EmailAuthenticator implements Authenticator {
 		boolean isValid = code.equals(enteredCode);
 		if (isValid) {
 			if (Long.parseLong(ttl) < System.currentTimeMillis()) {
+				context.getEvent().user(context.getUser()).error(EXPIRED_EMAIL_CODE);
 				context.failureChallenge(AuthenticationFlowError.EXPIRED_CODE,
 					context.form().setError("emailAuthCodeExpired").createForm(TPL_CODE));
 			} else {
@@ -119,6 +124,7 @@ public class EmailAuthenticator implements Authenticator {
 		} else {
 			AuthenticationExecutionModel execution = context.getExecution();
 			if (execution.isRequired()) {
+				context.getEvent().user(context.getUser()).error(INVALID_EMAIL_CODE);
 				context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS,
 					context.form().setAttribute("realm", context.getRealm())
 						.setError("emailAuthCodeInvalid").createForm(TPL_CODE));
